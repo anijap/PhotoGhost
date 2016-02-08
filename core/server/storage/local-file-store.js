@@ -9,7 +9,8 @@ var express   = require('express'),
     errors    = require('../errors'),
     config    = require('../config'),
     utils     = require('../utils'),
-    baseStore = require('./base');
+    baseStore = require('./base'),
+    gm 	      = require('gm');
 
 function LocalFileStore() {
 }
@@ -22,17 +23,32 @@ util.inherits(LocalFileStore, baseStore);
 LocalFileStore.prototype.save = function (image, targetDir) {
     targetDir = targetDir || this.getTargetDir(config.paths.imagesPath);
     var targetFilename;
+    var targetFilenameAdjusted;
 
     return this.getUniqueFileName(this, image, targetDir).then(function (filename) {
         targetFilename = filename;
         return Promise.promisify(fs.mkdirs)(targetDir);
-    }).then(function () {
+    }).then(function() {
         return Promise.promisify(fs.copy)(image.path, targetFilename);
+    }).then(function() {
+	var deferred = Promise.defer();
+
+        gm(targetFilename).size(function(err, size) {
+	   if (err) return deferred.reject(err);
+
+           targetFilenameAdjusted = targetFilename.replace(/^([^.]*)\.(.*)$/, '$1-' + size.width + 'x' + size.height + '.$2');
+           console.log('Adjusted filename: ' + targetFilenameAdjusted);
+	   deferred.resolve(targetFilenameAdjusted);
+	});
+
+	return deferred.promise;
+    }).then(function() {
+        return Promise.promisify(fs.move)(targetFilename, targetFilenameAdjusted);
     }).then(function () {
         // The src for the image must be in URI format, not a file system path, which in Windows uses \
         // For local file system storage can use relative path so add a slash
         var fullUrl = (config.paths.subdir + '/' + config.paths.imagesRelPath + '/' +
-            path.relative(config.paths.imagesPath, targetFilename)).replace(new RegExp('\\' + path.sep, 'g'), '/');
+            path.relative(config.paths.imagesPath, targetFilenameAdjusted)).replace(new RegExp('\\' + path.sep, 'g'), '/');
         return fullUrl;
     }).catch(function (e) {
         errors.logError(e);
